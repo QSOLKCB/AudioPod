@@ -89,6 +89,8 @@ def inspect_model(model):
         if config_path.stat().st_size > 1024 * 1024:
             raise AudioPodError("Voice configuration is too large.")
         config = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict) or not isinstance(config.get("audio"), dict):
+            raise AudioPodError("Voice configuration must contain an audio settings object.")
         if config.get("phoneme_type", "espeak") != "espeak":
             raise AudioPodError("This version supports offline eSpeak-based Piper voices only.")
         rate = config["audio"]["sample_rate"]

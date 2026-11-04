@@ -146,6 +146,8 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
             if manifest_path.is_symlink() or manifest_path.stat().st_size > MAX_MANIFEST:
                 raise AudioPodError("Invalid resume manifest.")
             receipt = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(receipt, dict) or receipt.get("schema") != 1:
+                raise AudioPodError("Invalid or unsupported resume manifest.")
             if receipt.get("identity") != identity or receipt.get("key") != key:
                 raise AudioPodError("This folder belongs to different text, chapters, voice, or settings. Choose a new output folder.")
         else:

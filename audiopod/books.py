@@ -159,11 +159,12 @@ def _inline_markdown(text):
     text = re.sub(r"(?m)^\s*```[^\n]*$", "", text)
     text = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+)", "", text)
     text = re.sub(r"(`+|\*\*|__)(.+?)\1", r"\2", text)
+    text = re.sub(r"(?<!\w)(\*|_)(?=\S)(.+?)\1(?!\w)", r"\2", text)
     return unescape(text)
 
 
 def _text_book(path, raw):
-    text = raw.decode("utf-8-sig")
+    text = raw.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
     if "\x00" in text:
         raise AudioPodError("Text contains NUL bytes. Export the document as UTF-8 text.")
     markdown = path.suffix.lower() in {".md", ".markdown"}

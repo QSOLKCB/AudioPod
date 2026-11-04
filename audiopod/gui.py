@@ -6,6 +6,7 @@ import queue
 import tempfile
 import threading
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
@@ -23,13 +24,17 @@ class App:
         root.title("AudioPod — turn a book into a listen")
         root.geometry("1060x780")
         root.minsize(800, 650)
-        root.option_add("*Font", "{TkDefaultFont} 11")
+        self.body_font = tkfont.nametofont("TkDefaultFont")
+        self.body_font.configure(size=11)
+        root.option_add("*Font", "TkDefaultFont")
+        self.heading_font = self.body_font.copy()
+        self.heading_font.configure(size=26, weight="bold")
         self.controls = []
         frame = ttk.Frame(root, padding=20)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(3, weight=1)
-        ttk.Label(frame, text="AudioPod", font=("TkDefaultFont", 26, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text="AudioPod", font=self.heading_font).grid(row=0, column=0, sticky="w")
         ttk.Label(frame, text="Your books. A local voice. Listen at your own pace.").grid(row=1, column=0, sticky="w", pady=(0, 15))
         toolbar = ttk.Frame(frame)
         toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 10))

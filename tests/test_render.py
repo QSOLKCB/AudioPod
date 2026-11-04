@@ -155,9 +155,10 @@ class RenderTests(unittest.TestCase):
 
     def test_malformed_resume_manifest(self):
         self.output.mkdir()
-        (self.output / 'audiopod.json').write_text('{')
-        with self.assertRaises(AudioPodError):
-            self.render(resume=True)
+        for content in ['{', '[]', 'null', '{"schema": 999}']:
+            (self.output / 'audiopod.json').write_text(content)
+            with self.subTest(content=content), self.assertRaises(AudioPodError):
+                self.render(resume=True)
         self.assertFalse((self.output / '.audiopod-lock').exists())
 
     @unittest.skipIf(__import__('sys').platform == 'win32', 'Symlinks may require Windows developer mode')
@@ -177,9 +178,15 @@ class RenderTests(unittest.TestCase):
         self.assertIn('connect-src \'none\'', html)
 
     def test_non_espeak_voice_cannot_trigger_phonemizer_download(self):
-        Path(str(self.model) + '.json').write_text(json.dumps({'phoneme_type': 'pinyin'}))
+        Path(str(self.model) + '.json').write_text(json.dumps({'phoneme_type': 'pinyin', 'audio': {}}))
         with self.assertRaisesRegex(AudioPodError, 'offline'):
             inspect_model(self.model)
+
+    def test_non_object_voice_configuration_is_actionable(self):
+        for config in ['[]', 'null', '{"audio": []}']:
+            Path(str(self.model) + '.json').write_text(config)
+            with self.subTest(config=config), self.assertRaises(AudioPodError):
+                inspect_model(self.model)
 
 
 class DownloadTests(unittest.TestCase):

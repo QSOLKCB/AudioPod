@@ -90,6 +90,17 @@ class ImportTests(unittest.TestCase):
         self.assertIn('“Hello,” she said.', book.chapters[0].text)
         self.assertIn('Enki’s door.', book.chapters[1].text)
 
+    def test_markdown_emphasis_keeps_words(self):
+        book = load_book(self.write('book.md', '# Chapter 1\n\n*Quietly*, _she_ opened **the door**. file_name stays.'))
+        self.assertEqual(book.chapters[0].text, 'Chapter 1\n\nQuietly, she opened the door. file_name stays.')
+
+    def test_windows_line_endings_keep_markdown_metadata(self):
+        path = self.root / 'windows.md'
+        path.write_bytes(b'---\r\ntitle: Windows Book\r\nauthor: Writer\r\n---\r\n# Chapter 1\r\n\r\nHello.\r\n')
+        book = load_book(path)
+        self.assertEqual((book.title, book.author), ('Windows Book', 'Writer'))
+        self.assertEqual(book.chapters[0].text, 'Chapter 1\n\nHello.')
+
     def test_empty_binary_and_missing_inputs(self):
         for name, text in [('empty.txt', ' \n '), ('binary.txt', '\0data'), ('unsupported.pdf', 'Hello')]:
             with self.subTest(name=name), self.assertRaises(AudioPodError):

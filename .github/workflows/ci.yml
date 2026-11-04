@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 20
     env:
       AUDIOPOD_DATA_HOME: ${{ github.workspace }}/.audiopod
-      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      UV_CACHE_DIR: ${{ runner.temp }}/audiopod-uv-cache
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
-            .uv-cache
+            ${{ env.UV_CACHE_DIR }}
             .audiopod/voices
           key: audiopod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'audiopod/voices.py') }}
       - run: uv sync --locked
@@ -69,7 +69,9 @@ jobs:
       - name: Native desktop smoke test
         run: xvfb-run -a uv run --offline --locked python scripts/smoke_gui.py
       - name: Build source and wheel
-        run: uv build --no-sources
+        run: |
+          uv build --no-sources
+          python scripts/check_dist.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: audiopod-source-and-wheel
