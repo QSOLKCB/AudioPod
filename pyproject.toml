@@ -1,0 +1,18 @@
+[project]
+name = "audiopod"
+version = "0.1.0"
+description = "Offline, chapter-aware text and EPUB narration"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+dependencies = ["piper-tts==1.8.0"]
+
+[project.scripts]
+audiopod = "audiopod.cli:main"
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["audiopod"]

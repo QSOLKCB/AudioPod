@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+build/
+*.egg-info/
+.coverage
+*.onnx
+*.onnx.json
+*.wav
+*.mp3
+*.m4b
+output/
+.audiopod/
