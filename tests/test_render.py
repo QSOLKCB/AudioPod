@@ -12,6 +12,7 @@ import wave
 from audiopod import AudioPodError, Cancelled
 from audiopod.books import Book, Chapter
 from audiopod.player import player_html
+from audiopod.prosody import NATURAL, ORIGINAL
 from audiopod.render import Settings, render_book, resume_options
 from audiopod.voices import inspect_model, install_voice, FILES, default_model
 
@@ -113,6 +114,36 @@ class RenderTests(unittest.TestCase):
             path.write_text(json.dumps(receipt))
             with self.subTest(value=value), self.assertRaises(AudioPodError):
                 self.render(resume=True)
+
+    def test_legacy_job_restores_original_renderer_without_changing_audio(self):
+        self.render(settings=Settings(profile=ORIGINAL))
+        receipt = json.loads((self.output / 'audiopod.json').read_text())
+        self.assertEqual(receipt['identity']['settings'], {'speed': 1.0, 'speaker': 0, 'threads': 4, 'format': 'wav'})
+        before = {p.name: p.read_bytes() for p in self.output.glob('*.wav')}
+        book, settings, selected = resume_options(self.book, self.output)
+        self.assertEqual(settings.profile, ORIGINAL)
+        render_book(book, self.model, self.output, settings=settings, selected=selected, resume=True, engine_factory=ToneEngine)
+        self.assertEqual(ToneEngine.calls, 2)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.output.glob('*.wav')})
+        with self.assertRaisesRegex(AudioPodError, 'different'):
+            self.render(resume=True)  # The new default must not silently mix engines.
+
+    def test_natural_profile_and_pause_settings_are_bound_into_resume(self):
+        self.render(settings=Settings(pause_scale=1.25))
+        _, settings, _ = resume_options(self.book, self.output)
+        self.assertEqual((settings.profile, settings.pause_scale), (NATURAL, 1.25))
+        before = {p.name: p.read_bytes() for p in self.output.iterdir()}
+        for changed in (Settings(), Settings(profile=ORIGINAL), Settings(profile='natural-v2', pause_scale=1.25)):
+            with self.subTest(changed=changed), self.assertRaises(AudioPodError):
+                self.render(resume=True, settings=changed)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.output.iterdir()})
+
+    def test_invalid_delivery_controls_fail_before_output_creation(self):
+        for settings in (Settings(profile='quantum'), Settings(pause_scale=True), Settings(pause_scale=float('nan')),
+                         Settings(pause_scale=0), Settings(pause_scale=3), Settings(profile=ORIGINAL, pause_scale=1.25)):
+            with self.subTest(settings=settings), self.assertRaises(AudioPodError):
+                self.render(settings=settings)
+        self.assertFalse(self.output.exists())
 
     def test_missing_resume_folder_is_not_created(self):
         with self.assertRaises(AudioPodError):

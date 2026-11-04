@@ -9,10 +9,18 @@ import unittest
 from unittest.mock import patch
 
 from audiopod.cli import main
-from audiopod.preferences import load_preferences, save_preferences, suggested_output
+from audiopod.preferences import load_preferences, save_preferences, suggested_output, validated
+from audiopod.prosody import NATURAL, ORIGINAL
 
 
 class SetupTests(unittest.TestCase):
+    def test_delivery_preferences_are_validated_and_original_has_fixed_pauses(self):
+        self.assertEqual(validated({'profile': NATURAL, 'pause_scale': 1.5})['pause_scale'], 1.5)
+        self.assertEqual(validated({'profile': ORIGINAL, 'pause_scale': 1.5})['pause_scale'], 1)
+        self.assertEqual(validated({'profile': 'invalid'})['profile'], NATURAL)
+        for pause in (True, 0, 3, float('nan'), float('inf'), '1.5'):
+            self.assertEqual(validated({'pause_scale': pause})['pause_scale'], 1)
+
     def test_preferences_round_trip_excludes_text_and_invalid_values(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DATA_HOME': temp}):
             self.assertTrue(save_preferences({'model':'/local/voice.onnx', 'speed':1.25, 'threads':2, 'font_size':14, 'text':'PRIVATE BOOK'}))

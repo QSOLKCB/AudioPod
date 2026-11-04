@@ -8,6 +8,7 @@ import wave
 from unittest.mock import patch
 
 from audiopod.books import load_book
+from audiopod.audio import measure_wav
 from audiopod.render import render_book
 from audiopod.voices import default_model
 
@@ -30,4 +31,11 @@ with tempfile.TemporaryDirectory() as temp:
             print(f'{path.name}: {wav.getnframes() / wav.getframerate():.2f}s, {wav.getframerate()} Hz')
     receipt = json.loads((output / 'audiopod.json').read_text())
     assert len(receipt['completed']) == 2
+    for record in receipt['completed'].values():
+        quality = record['pcm_quality']
+        measured = measure_wav(output / record['file'], quality['sample_rate'], quality['frames'])
+        assert all(quality[field] == value for field, value in measured.items())
+        assert quality['frames'] == quality['source_frames'] + quality['pause_frames_added']
+        assert quality['sample_peak_dbfs'] <= -.999 and quality['clipped_samples'] == 0
+        print(f"{record['file']}: {quality['phrases']} phrases, {quality['sample_peak_dbfs']:.2f} dBFS peak, {quality['rms_dbfs']:.2f} dBFS RMS")
     print('Offline voice synthesis and verified resume passed.')

@@ -13,3 +13,6 @@ build/
 *.m4b
 output/
 .audiopod/
+narration-comparison/
+*-network.trace
+network.trace

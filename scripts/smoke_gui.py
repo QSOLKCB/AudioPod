@@ -13,6 +13,7 @@ from audiopod.books import load_book
 from audiopod.gui import App
 from audiopod.preferences import load_preferences
 from audiopod.render import Settings
+from audiopod.prosody import NATURAL, ORIGINAL
 
 
 def finish_worker(root, app):
@@ -40,9 +41,14 @@ with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DA
     app.preview_text()
     assert 'clouds' in app.preview.get('1.0', tk.END)
     app.threads.set('2')
+    assert app.profile.get() == 'Natural' and str(app.pause_control['state']) == 'readonly'
+    app.pause_scale.set('1.25')
     app.resize_text(3)
     assert load_preferences()['threads'] == 2
     assert load_preferences()['font_size'] == 14
+    assert load_preferences()['profile'] == NATURAL and load_preferences()['pause_scale'] == 1.25
+    app.profile.set('Original')
+    assert app.pause_scale.get() == '1.0' and str(app.pause_control['state']) == 'disabled'
     # Large reading text must not enlarge or hide the narration controls.
     for _ in range(12):
         app.resize_text(1)
@@ -57,6 +63,7 @@ with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DA
     finish_worker(root, app)
     assert not app.busy and app.player == player
     assert str(app.listen['state']) == 'normal'
+    assert str(app.pause_control['state']) == 'disabled'  # Worker completion respects Original.
     # A new source must never leave Listen pointing at the previous book.
     app.start(lambda: book, result_kind='book')
     finish_worker(root, app)
@@ -76,12 +83,14 @@ with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DA
     error.assert_called_once()
     assert app.player == player and app.output.get() == original_output
     assert str(app.listen['state']) == 'normal'
-    saved = Settings(speed=1.25, threads=2, format='wav')
+    saved = Settings(speed=1.25, threads=2, format='wav', pause_scale=1.5)
     with patch('audiopod.gui.filedialog.askdirectory', return_value=str(folder)), patch('audiopod.gui.resume_options', return_value=(book, saved, [1])):
         app.restore_job()
     assert app.chapters.curselection() == (1,)
     assert app.resume.get() and app.output.get() == str(folder)
     assert app.speed.get() == '1.25' and app.threads.get() == '2'
+    assert app.profile.get() == 'Natural' and app.pause_scale.get() == '1.5'
+    assert str(app.pause_control['state']) == 'readonly'
     assert app.player is None and app.render_output is None
     assert str(app.listen['state']) == 'disabled'
     with patch('audiopod.gui.webbrowser.open') as browser:
@@ -104,8 +113,12 @@ with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DA
     with patch('audiopod.gui.webbrowser.open') as browser:
         app.open_player()
     browser.assert_called_once_with(restored_player.resolve().as_uri())
+    with patch('audiopod.gui.filedialog.askdirectory', return_value=str(folder)), patch('audiopod.gui.resume_options', return_value=(book, Settings(profile=ORIGINAL), [0])):
+        app.restore_job()
+    assert app.profile.get() == 'Original' and app.pause_scale.get() == '1.0'
+    assert str(app.pause_control['state']) == 'disabled'
     app.help()
     root.update()
     assert any(isinstance(child, tk.Toplevel) for child in root.winfo_children())
     root.destroy()
-print('Tk selection, accessible reading size, preferences, workers, restored listening/output targets and help passed.')
+print('Tk selection, reading size, delivery/pause preferences, workers, restored targets/settings and help passed.')

@@ -18,6 +18,7 @@ from . import AudioPodError, Cancelled
 from .books import Chapter, load_book
 from .render import Settings, render_book, resume_options
 from .preferences import load_preferences, save_preferences, suggested_output
+from .prosody import PROFILE_LABELS, ORIGINAL
 from .voices import data_home, default_model, install_voice
 
 
@@ -106,9 +107,24 @@ class App:
         threads = ttk.Spinbox(bottom, from_=1, to=32, textvariable=self.threads, width=4)
         threads.pack(side="left", padx=6)
         self.controls.append(threads)
+        delivery = ttk.Frame(options)
+        delivery.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        self.profile = tk.StringVar(value=next(label for label, value in PROFILE_LABELS.items() if value == self.preferences["profile"]))
+        self.pause_scale = tk.StringVar(value=str(self.preferences["pause_scale"]))
+        ttk.Label(delivery, text="Delivery").pack(side="left", padx=(0, 5))
+        style = ttk.Combobox(delivery, textvariable=self.profile, values=tuple(PROFILE_LABELS), state="readonly", width=12)
+        style.pack(side="left", padx=(0, 15))
+        self.controls.append(style)
+        ttk.Label(delivery, text="Pause length").pack(side="left", padx=(0, 5))
+        self.pause_control = ttk.Combobox(delivery, textvariable=self.pause_scale, values=("0.5", "0.75", "1.0", "1.25", "1.5", "2.0"), state="readonly", width=6)
+        self.pause_control.pack(side="left")
+        ttk.Label(delivery, text="× · Natural preserves relative phrase levels").pack(side="left", padx=6)
+        self.controls.append(self.pause_control)
+        self.profile.trace_add("write", lambda *args: self.update_style())
+        self.update_style()
         self.resume = tk.BooleanVar()
         check = ttk.Checkbutton(options, text="Resume this folder", variable=self.resume)
-        check.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        check.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
         self.controls.append(check)
         row = ttk.Frame(frame)
         row.grid(row=5, column=0, sticky="ew")
@@ -179,6 +195,12 @@ class App:
             self.chapters.selection_clear(0, tk.END)
         self.preview_text()
 
+    def update_style(self):
+        original = PROFILE_LABELS.get(self.profile.get()) == ORIGINAL
+        if original:
+            self.pause_scale.set("1.0")
+        self.pause_control.configure(state="disabled" if self.busy or original else "readonly")
+
     def open_book(self):
         if self.busy:
             return
@@ -237,6 +259,8 @@ class App:
             self.author.set(book.author)
             for variable, value in ((self.speed, settings.speed), (self.format, settings.format), (self.speaker, settings.speaker), (self.threads, settings.threads)):
                 variable.set(str(value))
+            self.profile.set(next(label for label, value in PROFILE_LABELS.items() if value == settings.profile))
+            self.pause_scale.set(str(settings.pause_scale))
             self.chapters.selection_clear(0, tk.END)
             for index in selected:
                 self.chapters.selection_set(index)
@@ -290,7 +314,8 @@ class App:
             messagebox.showinfo("Select sections", "Select at least one section to narrate.")
             return
         try:
-            settings = Settings(float(self.speed.get()), int(self.speaker.get()), int(self.threads.get()), "wav" if preview else self.format.get())
+            settings = Settings(float(self.speed.get()), int(self.speaker.get()), int(self.threads.get()), "wav" if preview else self.format.get(),
+                                PROFILE_LABELS.get(self.profile.get(), "invalid"), float(self.pause_scale.get()))
             settings.validate()
         except (ValueError, AudioPodError) as exc:
             messagebox.showerror("Narration settings", str(exc))
@@ -326,6 +351,7 @@ class App:
                     self.busy = False
                     for widget in self.controls:
                         widget.configure(state="readonly" if isinstance(widget, ttk.Combobox) else "normal")
+                    self.update_style()
                     self.stop.configure(state="disabled")
                     if kind == "book":
                         self.set_book(value)
@@ -382,7 +408,8 @@ class App:
         try:
             self.preferences.update(model=self.model.get(), output_parent=str(Path(self.output.get()).expanduser().absolute().parent),
                                     speed=float(self.speed.get()), speaker=int(self.speaker.get()), threads=int(self.threads.get()),
-                                    format=self.format.get(), font_size=int(self.reading_font.cget("size")))
+                                    format=self.format.get(), font_size=int(self.reading_font.cget("size")),
+                                    profile=PROFILE_LABELS.get(self.profile.get()), pause_scale=float(self.pause_scale.get()))
             save_preferences(self.preferences)
         except (ValueError, OSError):
             pass  # Invalid optional preferences must not discard a book or stop audio.
@@ -416,7 +443,7 @@ class App:
     def help(self):
         self.show_text("Getting started", "1. Use Help & accessibility → Check setup. Install the Cori voice once if needed.\n\n"
                        "2. Open an EPUB, TXT or Markdown book, or paste text. Check the text preview. Select all, none, or use Ctrl/Shift to choose sections.\n\n"
-                       "3. Choose Voice preview, then Listen. Names and pronunciation may need human review.\n\n"
+                       "3. Choose Natural delivery for phrase planning, paragraph pauses and chapter-wide levels. Original retains the earlier renderer. Try Voice preview, then Listen. Names and pronunciation need human review.\n\n"
                        "4. Pick WAV (no FFmpeg needed), MP3 chapters, or M4B with chapter markers. Check the suggested output folder. Create audiobook.\n\n"
                        "5. Cancel or Escape stops safely. Completed chapters remain playable. To continue later, reopen the original book and use Resume folder.\n\n"
                        "6. Listen opens the portable player. Keep listen.html beside its chapter audio; book.m4b can travel alone. Open output shows the files.\n\n"
