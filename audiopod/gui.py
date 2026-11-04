@@ -241,6 +241,8 @@ class App:
             for index in selected:
                 self.chapters.selection_set(index)
             self.output.set(folder)
+            self.player = self.render_output = None
+            self.listen.configure(state="disabled")
             self.resume.set(True)
             self.preview_text()
             self.status.set("Saved settings restored. Choose the original voice, then Create audiobook to verify and resume.")

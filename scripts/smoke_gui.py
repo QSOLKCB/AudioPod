@@ -1,11 +1,14 @@
 """Exercise actual Tk widgets and the worker loop (run under Xvfb on Linux CI)."""
 from pathlib import Path
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import tkinter as tk
 from unittest.mock import patch
 
+from audiopod import AudioPodError
 from audiopod.books import load_book
 from audiopod.gui import App
 from audiopod.preferences import load_preferences
@@ -46,7 +49,9 @@ with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DA
     root.update()
     assert app.reading_font.cget('size') == 24
     assert app.stop.winfo_rooty() + app.stop.winfo_height() < root.winfo_rooty() + root.winfo_height()
-    player = Path(temp) / 'listen.html'
+    preview_folder = Path(temp) / 'preview'
+    preview_folder.mkdir()
+    player = preview_folder / 'listen.html'
     player.write_text('<p>Test</p>')
     app.start(lambda: player)
     finish_worker(root, app)
@@ -56,14 +61,51 @@ with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'AUDIOPOD_DA
     app.start(lambda: book, result_kind='book')
     finish_worker(root, app)
     assert app.player is None and str(app.listen['state']) == 'disabled'
+    # Restoring another job after a preview must reset both listening/output targets.
+    app.start(lambda: player)
+    finish_worker(root, app)
+    assert app.player == player and str(app.listen['state']) == 'normal'
+    original_output = app.output.get()
+    with patch('audiopod.gui.filedialog.askdirectory', return_value=''):
+        app.restore_job()
+    assert app.player == player and app.output.get() == original_output
+    folder = Path(temp) / 'saved-job'
+    folder.mkdir()
+    with patch('audiopod.gui.filedialog.askdirectory', return_value=str(folder)), patch('audiopod.gui.resume_options', side_effect=AudioPodError('Invalid saved job')), patch('audiopod.gui.messagebox.showerror') as error:
+        app.restore_job()
+    error.assert_called_once()
+    assert app.player == player and app.output.get() == original_output
+    assert str(app.listen['state']) == 'normal'
     saved = Settings(speed=1.25, threads=2, format='wav')
-    with patch('audiopod.gui.filedialog.askdirectory', return_value=temp), patch('audiopod.gui.resume_options', return_value=(book, saved, [1])):
+    with patch('audiopod.gui.filedialog.askdirectory', return_value=str(folder)), patch('audiopod.gui.resume_options', return_value=(book, saved, [1])):
         app.restore_job()
     assert app.chapters.curselection() == (1,)
-    assert app.resume.get() and app.output.get() == temp
+    assert app.resume.get() and app.output.get() == str(folder)
     assert app.speed.get() == '1.25' and app.threads.get() == '2'
+    assert app.player is None and app.render_output is None
+    assert str(app.listen['state']) == 'disabled'
+    with patch('audiopod.gui.webbrowser.open') as browser:
+        app.open_player()
+    browser.assert_not_called()
+    with patch('audiopod.gui.os.startfile', create=True) as startfile, patch('audiopod.gui.subprocess.Popen') as popen:
+        app.open_output()
+    if sys.platform == 'win32':
+        startfile.assert_called_once_with(folder)
+        popen.assert_not_called()
+    else:
+        popen.assert_called_once_with(['open' if sys.platform == 'darwin' else 'xdg-open', str(folder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        startfile.assert_not_called()
+    # A successful verify/render completion enables Listen for the restored job.
+    restored_player = folder / 'listen.html'
+    restored_player.write_text('<p>Restored job</p>')
+    app.start(lambda: restored_player)
+    finish_worker(root, app)
+    assert app.player == restored_player and str(app.listen['state']) == 'normal'
+    with patch('audiopod.gui.webbrowser.open') as browser:
+        app.open_player()
+    browser.assert_called_once_with(restored_player.resolve().as_uri())
     app.help()
     root.update()
     assert any(isinstance(child, tk.Toplevel) for child in root.winfo_children())
     root.destroy()
-print('Tk selection, accessible reading size, saved preferences, workers, resume controls and help passed.')
+print('Tk selection, accessible reading size, preferences, workers, restored listening/output targets and help passed.')
