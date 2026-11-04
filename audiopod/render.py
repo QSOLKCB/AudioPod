@@ -1,6 +1,6 @@
 """Atomic chapter exports with verified resume receipts."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 from importlib.metadata import PackageNotFoundError, version
 import json
@@ -27,12 +27,50 @@ class Settings:
     format: str = "wav"
 
     def validate(self):
-        if not math.isfinite(self.speed) or not 0.5 <= self.speed <= 2.0:
+        if type(self.speed) not in (float, int) or not 0.5 <= self.speed <= 2.0:
             raise AudioPodError("Narration speed must be between 0.5 and 2.0.")
-        if not 1 <= self.threads <= 32:
+        if type(self.threads) is not int or not 1 <= self.threads <= 32:
             raise AudioPodError("CPU threads must be between 1 and 32.")
         if self.format not in {"wav", "mp3", "m4b"}:
             raise AudioPodError("Choose WAV, MP3, or M4B output.")
+        if type(self.speaker) is not int or self.speaker < 0:
+            raise AudioPodError("Speaker ID must be a nonnegative integer.")
+
+
+def read_manifest(folder):
+    path = Path(folder) / "audiopod.json"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_MANIFEST:
+            raise AudioPodError("Choose an AudioPod output folder with a regular audiopod.json manifest.")
+        with path.open(encoding="utf-8") as f:
+            content = f.read(MAX_MANIFEST + 1)
+        if len(content) > MAX_MANIFEST:
+            raise AudioPodError("Resume manifest is too large.")
+        receipt = json.loads(content)
+        if not isinstance(receipt, dict) or receipt.get("schema") != 1 or not isinstance(receipt.get("identity"), dict):
+            raise AudioPodError("Invalid or unsupported resume manifest.")
+        return receipt
+    except (OSError, ValueError, RecursionError) as exc:
+        raise AudioPodError(f"Could not read resume settings: {exc}") from exc
+
+
+def resume_options(book, folder):
+    """Restore saved options; render_book still validates every byte before writing."""
+    identity = read_manifest(folder)["identity"]
+    try:
+        if identity.get("source_sha256") != book.source_sha256:
+            raise AudioPodError("Open the original source book before resuming this folder.")
+        settings = Settings(**identity["settings"])
+        settings.validate()
+        for field in ("title", "author", "language"):
+            if not isinstance(identity[field], str):
+                raise AudioPodError("Invalid book metadata in resume settings.")
+        selected = [c["index"] for c in identity["chapters"]]
+        if not selected or any(type(i) is not int or not 0 <= i < len(book.chapters) for i in selected) or selected != sorted(set(selected)):
+            raise AudioPodError("Invalid section selection in resume settings.")
+        return replace(book, title=identity["title"], author=identity["author"], language=identity["language"]), settings, selected
+    except (TypeError, ValueError, KeyError) as exc:
+        raise AudioPodError(f"Invalid resume settings: {exc}") from exc
 
 
 def _canonical(value):
@@ -131,6 +169,8 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
                 "voice": voice_hashes, "settings": asdict(settings)}
     key = hashlib.sha256(_canonical(identity).encode()).hexdigest()
     folder = Path(output).absolute()
+    if resume and not folder.is_dir():
+        raise AudioPodError("Resume folder does not exist. Choose the original output folder.")
     folder.mkdir(parents=True, exist_ok=True)
     if folder.is_symlink():
         raise AudioPodError("Choose an ordinary output directory, not a symbolic link.")
@@ -139,15 +179,13 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
         lock.mkdir()
     except FileExistsError as exc:
         raise AudioPodError("This output folder is locked by another job. See README for recovery after a forced stop.") from exc
+    player_dirty = False
+    save_player = None
     try:
         manifest_path = folder / "audiopod.json"
         entries = [p for p in folder.iterdir() if p != lock]
         if resume:
-            if manifest_path.is_symlink() or manifest_path.stat().st_size > MAX_MANIFEST:
-                raise AudioPodError("Invalid resume manifest.")
-            receipt = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if not isinstance(receipt, dict) or receipt.get("schema") != 1:
-                raise AudioPodError("Invalid or unsupported resume manifest.")
+            receipt = read_manifest(folder)
             if receipt.get("identity") != identity or receipt.get("key") != key:
                 raise AudioPodError("This folder belongs to different text, chapters, voice, or settings. Choose a new output folder.")
         else:
@@ -157,12 +195,56 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
         if not isinstance(receipt.get("completed"), dict):
             raise AudioPodError("Invalid chapter records in resume manifest.")
         records, engine = [], None
+        extension = "mp3" if settings.format == "mp3" else "wav"
+        # Validate the ENTIRE saved job before creating audio or rewriting its player.
+        if set(receipt["completed"]) - {str(i) for i in selected}:
+            raise AudioPodError("Resume manifest contains unselected chapter records.")
+        for index in selected:
+            if cancelled():
+                raise Cancelled("Verification cancelled; existing files were left intact.")
+            name = f"{index + 1:04d}.{extension}"
+            target = folder / name
+            if target.is_symlink():
+                raise AudioPodError(f"Refusing linked audio file: {name}")
+            if str(index) in receipt["completed"]:
+                record = receipt["completed"][str(index)]
+                if not isinstance(record, dict) or record.get("file") != name or record.get("index") != index or record.get("title") != book.chapters[index].title:
+                    raise AudioPodError("Invalid chapter record in resume manifest.")
+                duration = record.get("duration")
+                if type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0:
+                    raise AudioPodError("Invalid chapter duration in resume manifest.")
+                progress({"message": f"Checking saved audio: {record['title']}", "fraction": 0})
+                if not target.is_file() or sha256_file(target) != record.get("sha256"):
+                    raise AudioPodError(f"Saved audio {name} is missing or changed. Use a new output folder.")
+                records.append(record)
+            elif target.exists():
+                raise AudioPodError(f"Untracked audio {name} already exists. Move it aside before resuming.")
+        if settings.format == "m4b":
+            target = folder / "book.m4b"
+            if target.is_symlink():
+                raise AudioPodError("Refusing a linked M4B file.")
+            if receipt.get("m4b_sha256"):
+                if len(records) != len(selected) or not target.is_file() or sha256_file(target) != receipt["m4b_sha256"]:
+                    raise AudioPodError("Saved M4B is missing or changed, or its chapter records are incomplete. Use a new output folder.")
+            elif target.exists():
+                raise AudioPodError("Untracked book.m4b exists. Move it aside before resuming.")
+
+        last_player_write = 0.0
+        player_dirty = False
+        def save_player():
+            nonlocal last_player_write, player_dirty
+            tracks = [{**r, "text": book.chapters[r["index"]].text} for r in sorted(records, key=lambda r: r["index"])]
+            _atomic(folder / "listen.html", player_html(book.title, book.author, tracks, key, book.language))
+            _atomic(folder / "playlist.m3u", "#EXTM3U\n" + "".join(r["file"] + "\n" for r in tracks))
+            last_player_write = time.monotonic()
+            player_dirty = False
 
         def save():
+            nonlocal player_dirty
             _atomic(manifest_path, json.dumps(receipt, ensure_ascii=False, indent=2) + "\n")
-            tracks = [{**r, "text": book.chapters[r["index"]].text} for r in records]
-            _atomic(folder / "listen.html", player_html(book.title, book.author, tracks, key))
-            _atomic(folder / "playlist.m3u", "#EXTM3U\n" + "".join(r["file"] + "\n" for r in records))
+            player_dirty = True
+            if time.monotonic() - last_player_write >= 2.0:
+                save_player()
 
         # Keep the previous listening page intact until resume validation succeeds.
         if not resume:
@@ -171,21 +253,10 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
             if cancelled():
                 raise Cancelled("Stopped. Completed chapters are saved.")
             chapter = book.chapters[index]
-            extension = "mp3" if settings.format == "mp3" else "wav"
             name = f"{index + 1:04d}.{extension}"
             target = folder / name
             record = receipt["completed"].get(str(index))
-            if target.is_symlink():
-                raise AudioPodError(f"Refusing linked audio file: {name}")
             if record:
-                if not isinstance(record, dict) or record.get("file") != name or record.get("index") != index or record.get("title") != chapter.title:
-                    raise AudioPodError("Invalid chapter record in resume manifest.")
-                duration = record.get("duration")
-                if not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
-                    raise AudioPodError("Invalid chapter duration in resume manifest.")
-                if not target.is_file() or sha256_file(target) != record.get("sha256"):
-                    raise AudioPodError(f"Saved audio {name} is missing or changed. Use a new output folder.")
-                records.append(record)
                 progress({"message": f"Verified: {chapter.title}", "fraction": (number + 1) / len(selected)})
                 continue
             if target.exists():
@@ -209,6 +280,7 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
             records.append(record)
             save()
         save()
+        save_player()
         if settings.format == "m4b":
             target = folder / "book.m4b"
             if target.is_symlink():
@@ -221,17 +293,21 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
                 if target.exists():
                     raise AudioPodError("Untracked book.m4b exists. Move it aside before resuming.")
                 progress({"message": "Encoding audiobook with chapter markers…", "fraction": 1})
-                _m4b(folder, book, records, cancelled)
+                _m4b(folder, book, sorted(records, key=lambda r: r["index"]), cancelled)
                 receipt["m4b_sha256"] = sha256_file(target)
                 save()
         progress({"message": f"Ready to listen: {folder / 'listen.html'}", "fraction": 1})
         return folder / "listen.html"
     except (AudioPodError, KeyboardInterrupt):
         raise
-    except (OSError, ValueError, KeyError, TypeError, wave.Error, EOFError, RuntimeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, OverflowError, wave.Error, EOFError, RuntimeError) as exc:
         raise AudioPodError(f"Could not finish the audiobook: {exc}") from exc
     finally:
-        lock.rmdir()
+        try:
+            if player_dirty and save_player is not None:
+                save_player()
+        finally:
+            lock.rmdir()
 
 
 MAX_MANIFEST = 20 * 1024 * 1024

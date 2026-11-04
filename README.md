@@ -1,6 +1,8 @@
 # AudioPod
 
-**Turn a book into a listen.** Convert local EPUB books, text and Markdown into spoken audio with a local Piper voice. A native desktop app and CLI share the same importer and rendering engine.
+**[Installation guide](docs/INSTALLATION.md) · [Getting started](docs/GETTING_STARTED.md) · [Troubleshooting and recovery](docs/TROUBLESHOOTING.md)**
+
+**Turn a book into a listen.** Convert local EPUB books, text and Markdown into spoken audio with a local Piper voice. The native desktop GUI runs on Windows, Linux and macOS; it shares the importer and rendering engine with the CLI.
 
 No account, hosted inference, telemetry, subscription, Docker or Node.js. Install the Python dependencies and a voice once; narration then works offline. The app never sends your book to a service.
 
@@ -13,6 +15,8 @@ AudioPod sets `ORT_DISABLE_TELEMETRY=1` before importing ONNX Runtime, and also 
 - Export chapter WAVs, chapter MP3s, or a single M4B audiobook with chapter markers. M4B exports also retain chapter WAVs for the listening page.
 - Open `listen.html`: chapter navigation, ±15-second seeking, playback speed, keyboard controls, chapter text and browser-local position bookmarks. No server or connection required.
 - Cancel at an audio chunk boundary and resume completed chapters after checking their hashes. The model loads once per job; bounded chunks and a four-thread CPU default keep long books manageable.
+- Check setup locally with `audiopod doctor`; restore a job's settings with `audiopod resume` or **Resume folder…**. The desktop remembers your voice/settings, suggests a fresh book-specific folder, offers larger reading text and shows an approximate listening length.
+- The player includes a sleep timer and restart control. Resume checks all saved audio before writing, and short-chapter jobs batch player updates while saving every chapter receipt.
 
 ## First run
 
@@ -29,6 +33,8 @@ uv run --offline --locked audiopod
 2. **Open book…** or **Paste text…**, inspect the preview and select sections. Front matter and part headings are selectable too.
 3. Choose a new output folder, voice speed and format. **Voice preview** renders up to 400 characters from the first selected section into a separate local preview folder.
 4. Choose **Create audiobook**, then **Listen**. Keep the output folder together, or copy `book.m4b` alone to an audiobook player.
+
+After setup, use `launch-audiopod.cmd` on Windows, `launch-audiopod.command` on macOS, or `./launch-audiopod.sh` on Linux. See the [platform installation guide](docs/INSTALLATION.md#open-the-desktop-after-installation) for launch instructions.
 
 ### Ubuntu / Debian
 
@@ -56,6 +62,9 @@ The importer and help work without Piper: `python -m audiopod inspect book.epub`
 # Explicit one-time voice download; no book is involved.
 uv run --offline --locked audiopod install-voice
 
+# Check setup without any downloads.
+uv run --offline --locked audiopod doctor
+
 # See section numbers before choosing what to narrate.
 uv run --offline --locked audiopod inspect book.epub
 
@@ -68,6 +77,9 @@ uv run --offline --locked audiopod render book.epub --output output/selection \
 
 # Repeat the SAME command/settings, adding --resume after cancellation.
 uv run --offline --locked audiopod render book.epub --output output/my-book --format m4b --resume
+
+# Or restore the original selection/settings automatically.
+uv run --offline --locked audiopod resume book.epub --output output/my-book
 
 # Small original sample supplied with the app.
 uv run --offline --locked audiopod render examples/first-listen.md --output output/first-listen
@@ -106,9 +118,11 @@ Voices and previews are stored under `~/.local/share/audiopod` on Linux, `~/Libr
 uv run --offline --locked python -m unittest discover -s tests -v
 uv run --offline --locked python scripts/smoke_voice.py  # voice installed first
 xvfb-run -a uv run --offline --locked python scripts/smoke_gui.py  # Linux
+uv run --locked --with quickjs==1.19.4 python scripts/smoke_player.py  # test-only JS engine
+uv run --offline --locked python scripts/benchmark_splitter.py
 uv build --no-sources
 ```
 
-Core tests use generated fixtures, including tone WAVs for encoder checks. The separate speech test uses actual Piper inference and blocks Python socket connections during narration. CI checks Python 3.12 on Linux, Windows and macOS, plus Python 3.14 on Linux. A Linux integration job tests real speech, FFmpeg encoders and Tk, and builds wheel/source artifacts. Verified voice and dependency caches avoid repeated downloads. No private book or narration is uploaded by CI.
+Core tests use generated fixtures, including tone WAVs for encoder checks. The separate speech test uses actual Piper inference and blocks Python socket connections during narration; Linux CI also traces native networking. CI checks Python 3.12 on Linux, Windows and macOS, plus Python 3.14 on Linux, and exercises the native Tk GUI on all three operating systems. The Linux integration job tests real speech, FFmpeg encoders and player JavaScript, and builds wheel/source artifacts. QuickJS is used only for player tests and is not an app dependency. Verified voice and dependency caches avoid repeated downloads. No private book or narration is uploaded by CI.
 
 AudioPod source is Apache-2.0. Third-party dependencies, engines, voices and user books retain their own licences. See [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -12,7 +12,7 @@ import wave
 from audiopod import AudioPodError, Cancelled
 from audiopod.books import Book, Chapter
 from audiopod.player import player_html
-from audiopod.render import Settings, render_book
+from audiopod.render import Settings, render_book, resume_options
 from audiopod.voices import inspect_model, install_voice, FILES, default_model
 
 
@@ -81,6 +81,53 @@ class RenderTests(unittest.TestCase):
             self.render(resume=True)
         self.assertEqual(ToneEngine.calls, 2)
 
+    def test_resume_validates_later_chapters_before_any_new_writes(self):
+        self.render()
+        manifest_path = self.output / 'audiopod.json'
+        receipt = json.loads(manifest_path.read_text())
+        del receipt['completed']['0']
+        manifest_path.write_text(json.dumps(receipt))
+        (self.output / '0001.wav').unlink()
+        (self.output / '0002.wav').write_bytes(b'corrupt later chapter')
+        before = {p.name: p.read_bytes() for p in self.output.iterdir()}
+        with self.assertRaisesRegex(AudioPodError, 'missing or changed'):
+            self.render(resume=True)
+        self.assertEqual(ToneEngine.calls, 2)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.output.iterdir()})
+
+    def test_restore_job_recovers_metadata_selection_and_settings(self):
+        self.book = replace(self.book, title='Custom title', author='Custom author')
+        self.render(selected=[1], settings=Settings(speed=.9, threads=2))
+        restored, settings, selected = resume_options(replace(self.book, title='Original'), self.output)
+        self.assertEqual((restored.title, restored.author), ('Custom title', 'Custom author'))
+        self.assertEqual((selected, settings.speed, settings.threads), ([1], .9, 2))
+        with self.assertRaisesRegex(AudioPodError, 'original source'):
+            resume_options(replace(self.book, source_sha256='different'), self.output)
+
+    def test_falsey_completed_records_are_rejected(self):
+        self.render()
+        path = self.output / 'audiopod.json'
+        receipt = json.loads(path.read_text())
+        for value in [None, {}, False, '']:
+            receipt['completed']['0'] = value
+            path.write_text(json.dumps(receipt))
+            with self.subTest(value=value), self.assertRaises(AudioPodError):
+                self.render(resume=True)
+
+    def test_missing_resume_folder_is_not_created(self):
+        with self.assertRaises(AudioPodError):
+            self.render(resume=True)
+        self.assertFalse(self.output.exists())
+
+    def test_short_chapters_do_not_rewrite_the_whole_player_each_time(self):
+        from audiopod import render as module
+        self.book = replace(self.book, chapters=tuple(Chapter(str(i), 'Hello') for i in range(30)))
+        with patch('audiopod.render.player_html', wraps=module.player_html) as player, patch('audiopod.render.time.monotonic', return_value=100):
+            self.render()
+        self.assertLessEqual(player.call_count, 2)
+        self.assertEqual(len(json.loads((self.output / 'audiopod.json').read_text())['completed']), 30)
+        self.assertIn('0030.wav', (self.output / 'listen.html').read_text())
+
     def test_no_overwrite_and_lock_exclusion(self):
         self.output.mkdir()
         (self.output / 'important.txt').write_text('keep me')
@@ -126,7 +173,7 @@ class RenderTests(unittest.TestCase):
                 self.render(selected=selected)
 
     def test_invalid_settings_and_missing_model(self):
-        for settings in [Settings(speed=float('nan')), Settings(speed=0), Settings(threads=0), Settings(format='exe'), Settings(speaker=1)]:
+        for settings in [Settings(speed=float('nan')), Settings(speed=0), Settings(speed=10 ** 400), Settings(threads=0), Settings(format='exe'), Settings(speaker=1)]:
             with self.subTest(settings=settings), self.assertRaises(AudioPodError):
                 self.render(settings=settings)
         self.model.unlink()
@@ -155,10 +202,12 @@ class RenderTests(unittest.TestCase):
 
     def test_malformed_resume_manifest(self):
         self.output.mkdir()
-        for content in ['{', '[]', 'null', '{"schema": 999}']:
+        for content in ['{', '[]', 'null', '{"schema": 999}', '[' * 2000 + '0' + ']' * 2000]:
             (self.output / 'audiopod.json').write_text(content)
             with self.subTest(content=content), self.assertRaises(AudioPodError):
                 self.render(resume=True)
+            with self.assertRaises(AudioPodError):
+                resume_options(self.book, self.output)
         self.assertFalse((self.output / '.audiopod-lock').exists())
 
     @unittest.skipIf(__import__('sys').platform == 'win32', 'Symlinks may require Windows developer mode')

@@ -32,6 +32,9 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: python -m compileall -q audiopod
       - run: python -m audiopod inspect examples/first-listen.md --json
+      - name: Native Windows/macOS desktop smoke test
+        if: runner.os != 'Linux'
+        run: python -m scripts.smoke_gui
   voice:
     name: Offline voice, encoders and desktop
     runs-on: ubuntu-latest
@@ -68,6 +71,8 @@ jobs:
           python scripts/check_network_trace.py network.trace
       - name: Native desktop smoke test
         run: xvfb-run -a uv run --offline --locked python scripts/smoke_gui.py
+      - name: Listening page behaviour
+        run: uv run --locked --with quickjs==1.19.4 python scripts/smoke_player.py
       - name: Build source and wheel
         run: |
           uv build --no-sources

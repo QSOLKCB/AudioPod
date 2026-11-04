@@ -16,6 +16,8 @@ for path in archives:
             entries = t.getmembers()
             assert not any(e.issym() or e.islnk() for e in entries), 'Source archive contains links'
             names = [e.name for e in entries]
+        for guide in ('INSTALLATION.md', 'GETTING_STARTED.md', 'TROUBLESHOOTING.md'):
+            assert any(n.endswith('docs/' + guide) for n in names), f'Missing guide: {guide}'
     for name in names:
         parts = PurePosixPath(name).parts
         assert not set(parts) & {'.venv', '.uv-cache', '.audiopod', '__pycache__'}, name

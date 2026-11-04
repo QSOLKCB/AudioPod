@@ -1,7 +1,6 @@
 """One CPU model session per render; no network or downloads."""
 
 import os
-from pathlib import Path
 import wave
 
 from . import AudioPodError, Cancelled
@@ -30,12 +29,12 @@ class PiperEngine:
             raise AudioPodError(f"Could not load the local voice: {exc}") from exc
 
     def render(self, text, target, progress, cancelled):
-        parts = list(split_text(text))
-        frames = 0
+        total = sum(1 for _ in split_text(text))
+        frames = padding_frames = 0
         try:
             with wave.open(str(target), "wb") as wav:
                 wav.setparams((1, 2, self.rate, 0, "NONE", "not compressed"))
-                for index, part in enumerate(parts):
+                for index, part in enumerate(split_text(text)):
                     if cancelled():
                         raise Cancelled("Stopped. Completed chapters are saved; resume restarts the unfinished chapter.")
                     for audio in self.voice.synthesize(part, syn_config=self.settings):
@@ -45,12 +44,16 @@ class PiperEngine:
                             raise AudioPodError("Voice returned an unexpected audio format.")
                         data = audio.audio_int16_bytes
                         frames += len(data) // 2
-                        if frames * 2 > 3_900_000_000:
+                        if (frames + padding_frames) * 2 > 3_900_000_000:
                             raise AudioPodError("Chapter exceeds the WAV size limit. Split it into smaller chapters.")
                         wav.writeframesraw(data)
                     # Short separation keeps independent chunks from running together.
-                    wav.writeframesraw(b"\0\0" * int(self.rate * 0.12))
-                    progress(index + 1, len(parts))
+                    padding = int(self.rate * 0.12)
+                    padding_frames += padding
+                    if (frames + padding_frames) * 2 > 3_900_000_000:
+                        raise AudioPodError("Chapter exceeds the WAV size limit. Split it into smaller chapters.")
+                    wav.writeframesraw(b"\0\0" * padding)
+                    progress(index + 1, total)
             if frames == 0:
                 raise AudioPodError("The voice produced no audio for this chapter.")
         except (AudioPodError, KeyboardInterrupt):
