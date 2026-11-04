@@ -1,6 +1,7 @@
 """Bounded, offline import. EPUB spine order is the reading order."""
 
 from dataclasses import dataclass, replace
+from functools import cached_property
 import hashlib
 from html import unescape
 import posixpath
@@ -22,6 +23,10 @@ class Chapter:
     title: str
     text: str
 
+    @cached_property
+    def words(self):
+        return len(self.text.split())
+
 
 @dataclass(frozen=True)
 class Book:
@@ -31,9 +36,9 @@ class Book:
     chapters: tuple[Chapter, ...]
     source_sha256: str
 
-    @property
+    @cached_property
     def words(self):
-        return sum(len(c.text.split()) for c in self.chapters)
+        return sum(c.words for c in self.chapters)
 
 
 def _clean(text):
@@ -69,15 +74,14 @@ def _xhtml(data):
     root = _xml(data)
     body = next((e for e in root.iter() if _local(e.tag) == "body"), root)
     chunks, headings = [], []
-    blocks = {"p", "div", "section", "article", "blockquote", "li", "pre", "br", "hr", "tr"}
+    blocks = {"p", "div", "section", "article", "blockquote", "li", "pre", "br", "hr", "tr", "td", "th", "dt", "dd", "figcaption"}
 
     def walk(e):
         tag = _local(e.tag)
         if tag in {"head", "script", "style", "nav"} or "hidden" in e.attrib or e.get("aria-hidden") == "true":
             return
         heading = tag in {"h1", "h2", "h3", "h4", "h5", "h6"}
-        if heading:
-            headings.append(" ".join("".join(e.itertext()).split()))
+        start = len(chunks)
         if heading or tag in blocks:
             chunks.append("\n\n")
         if tag == "img" and e.get("alt"):
@@ -90,6 +94,8 @@ def _xhtml(data):
                 chunks.append(child.tail)
         if heading or tag in blocks:
             chunks.append("\n\n")
+        if heading:
+            headings.append(" ".join("".join(chunks[start:]).split()))
 
     walk(body)
     return _clean("".join(chunks)), next((h for h in headings if h), "")
@@ -202,6 +208,8 @@ def _text_book(path, raw):
 def load_book(filename):
     path = Path(filename)
     try:
+        if not path.is_file():
+            raise AudioPodError("Choose a regular book file; directories, pipes and devices are not supported.")
         limit = MAX_ARCHIVE if path.suffix.lower() == ".epub" else MAX_TEXT
         with path.open("rb") as f:
             raw = f.read(limit + 1)
@@ -230,16 +238,24 @@ def split_text(text, limit=600):
     """Bound memory at word/sentence boundaries without deleting or repeating text."""
     if limit < 32:
         raise ValueError("Chunk limit must be at least 32 characters.")
-    text = text.strip()
-    while text:
-        if len(text) <= limit:
-            yield text
+    start, size = 0, len(text)
+    while start < size:
+        while start < size and text[start].isspace():
+            start += 1
+        if size - start <= limit:
+            tail = text[start:].strip()
+            if tail:
+                yield tail
             return
-        window = text[:limit]
+        window = text[start:start + limit]
         boundaries = list(re.finditer(r"[.!?。！？][\"'’”]?\s+|\n\s*\n", window))
-        end = boundaries[-1].end() if boundaries else window.rfind(" ")
+        end = boundaries[-1].end() if boundaries else 0
         if end < limit // 3:
-            end = limit
-        chunk, text = text[:end].strip(), text[end:].lstrip()
+            # A short opening sentence must not force a cut through a later word.
+            end = next((i for i in range(len(window) - 1, -1, -1) if window[i].isspace()), 0)
+        if not end:
+            end = limit  # Unbroken tokens/scripts still need a bounded chunk.
+        chunk = text[start:start + end].strip()
+        start += end
         if chunk:
             yield chunk

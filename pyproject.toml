@@ -18,4 +18,4 @@ build-backend = "hatchling.build"
 packages = ["audiopod"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["audiopod", "examples", "scripts", "tests", "README.md", "THIRD_PARTY.md", "LICENSE", "pyproject.toml", "uv.lock"]
+only-include = ["audiopod", "docs", "examples", "scripts", "tests", "launch-audiopod.cmd", "launch-audiopod.command", "launch-audiopod.sh", "README.md", "THIRD_PARTY.md", "LICENSE", "pyproject.toml", "uv.lock"]

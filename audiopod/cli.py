@@ -10,7 +10,7 @@ import threading
 
 from . import AudioPodError, Cancelled, __version__
 from .books import load_book
-from .render import Settings, render_book
+from .render import Settings, render_book, resume_options
 from .voices import default_model, install_voice
 
 
@@ -33,11 +33,23 @@ def chapter_selection(value, count):
 
 
 def main(argv=None):
+    # Redirected Windows stdout may otherwise fail on non-Latin book titles.
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Turn local text and EPUB books into offline audiobooks.")
     parser.add_argument("--version", action="version", version=f"AudioPod {__version__}")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("gui", help="Open the desktop app (also the default)")
     commands.add_parser("install-voice", help="Download and verify Cori (about 61 MiB); only this command accesses the network")
+    doctor = commands.add_parser("doctor", help="Check local setup without downloading anything")
+    doctor.add_argument("--model", type=Path, default=default_model())
+    doctor.add_argument("--json", action="store_true")
+    resume = commands.add_parser("resume", help="Restore section selection and settings from an existing job")
+    resume.add_argument("source", type=Path)
+    resume.add_argument("--output", type=Path, required=True)
+    resume.add_argument("--model", type=Path, default=default_model())
     inspect = commands.add_parser("inspect", help="List a book's imported reading order without loading a voice")
     inspect.add_argument("source", type=Path)
     inspect.add_argument("--json", action="store_true")
@@ -63,13 +75,23 @@ def main(argv=None):
         if args.command in {None, "gui"}:
             try:
                 from .gui import launch
-                return launch()
+                return launch(cancelled)
             except ImportError as exc:
                 raise AudioPodError("Tk is not installed in this Python. See README desktop setup, or use the CLI.") from exc
         if args.command == "install-voice":
             install_voice(print, cancelled.is_set)
             return 0
+        if args.command == "doctor":
+            from .diagnostics import diagnose, format_diagnostics
+            report = diagnose(args.model)
+            print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else format_diagnostics(report))
+            return 0 if report["ready_for_wav"] else 1
         book = load_book(args.source)
+        if args.command == "resume":
+            book, settings, selected = resume_options(book, args.output)
+            render_book(book, args.model, args.output, settings, selected, True,
+                        lambda e: print(f"{e['fraction']:.0%} · {e['message']}", flush=True), cancelled.is_set)
+            return 0
         if args.command == "inspect":
             data = {"title": book.title, "author": book.author, "language": book.language,
                     "source_sha256": book.source_sha256, "words": book.words,

@@ -86,6 +86,8 @@ def inspect_model(model):
     try:
         if not model.is_file() or not model.stat().st_size:
             raise AudioPodError("Voice is missing. Install Cori or choose a local Piper ONNX voice.")
+        if not config_path.is_file():
+            raise AudioPodError("Choose a voice with an adjacent regular .onnx.json file.")
         if config_path.stat().st_size > 1024 * 1024:
             raise AudioPodError("Voice configuration is too large.")
         config = json.loads(config_path.read_text(encoding="utf-8"))

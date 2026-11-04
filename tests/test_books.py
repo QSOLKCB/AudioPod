@@ -120,6 +120,27 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(''.join(chunks), text)
         self.assertTrue(all(len(c) <= 100 for c in chunks))
 
+    def test_short_opening_sentence_does_not_split_a_later_word(self):
+        text = 'Hi. ' + 'narration ' * 80
+        chunks = list(split_text(text))
+        self.assertEqual(text.split(), ' '.join(chunks).split())
+        self.assertTrue(all(len(c) <= 600 for c in chunks))
+
+    def test_epub_table_cells_and_hidden_heading_text(self):
+        path = self.root / 'table.epub'
+        epub(path, '<h1>Visible<span hidden="hidden">Private</span> title</h1><table><tr><td>First</td><td>Second</td></tr></table>')
+        book = load_book(path)
+        self.assertEqual(book.chapters[0].title, 'Visible title')
+        self.assertEqual(book.chapters[0].text.split(), ['Visible', 'title', 'First', 'Second'])
+
+    @unittest.skipUnless(hasattr(__import__('os'), 'mkfifo'), 'Unix named pipes')
+    def test_named_pipe_input_is_rejected_without_opening(self):
+        import os
+        path = self.root / 'pipe.txt'
+        os.mkfifo(path)
+        with self.assertRaisesRegex(AudioPodError, 'regular'):
+            load_book(path)
+
     def test_chapter_range_validation(self):
         self.assertEqual(chapter_selection('1,3-5,3', 5), [0, 2, 3, 4])
         for value in ['0', '2-1', '6', '1-9999999999', 'NaN', '1,', '1-2-3']:
