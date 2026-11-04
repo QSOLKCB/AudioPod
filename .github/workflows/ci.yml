@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 20
     env:
       AUDIOPOD_DATA_HOME: ${{ github.workspace }}/.audiopod
-      UV_CACHE_DIR: ${{ runner.temp }}/audiopod-uv-cache
+      UV_CACHE_DIR: ${{ github.workspace }}/../audiopod-uv-cache
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
