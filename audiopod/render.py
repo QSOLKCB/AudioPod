@@ -16,6 +16,7 @@ import wave
 from . import AudioPodError, Cancelled, __version__
 from .engine import PiperEngine
 from .player import player_html
+from .prosody import NATURAL, ORIGINAL
 from .voices import inspect_model, sha256_file
 
 
@@ -25,6 +26,8 @@ class Settings:
     speaker: int = 0
     threads: int = 4
     format: str = "wav"
+    profile: str = NATURAL
+    pause_scale: float = 1.0
 
     def validate(self):
         if type(self.speed) not in (float, int) or not 0.5 <= self.speed <= 2.0:
@@ -35,6 +38,20 @@ class Settings:
             raise AudioPodError("Choose WAV, MP3, or M4B output.")
         if type(self.speaker) is not int or self.speaker < 0:
             raise AudioPodError("Speaker ID must be a nonnegative integer.")
+        if self.profile not in (NATURAL, ORIGINAL):
+            raise AudioPodError("Choose Natural or Original narration.")
+        if type(self.pause_scale) not in (int, float) or not .5 <= self.pause_scale <= 2:
+            raise AudioPodError("Pause scale must be between 0.5 and 2.0.")
+        if self.profile == ORIGINAL and self.pause_scale != 1:
+            raise AudioPodError("Adjustable pauses require Natural narration.")
+
+    def identity(self):
+        fields = asdict(self)
+        if self.profile == ORIGINAL:
+            # Preserve exact pre-natural-engine job identities and audio on resume.
+            del fields["profile"]
+            del fields["pause_scale"]
+        return fields
 
 
 def read_manifest(folder):
@@ -60,7 +77,7 @@ def resume_options(book, folder):
     try:
         if identity.get("source_sha256") != book.source_sha256:
             raise AudioPodError("Open the original source book before resuming this folder.")
-        settings = Settings(**identity["settings"])
+        settings = Settings(**({"profile": ORIGINAL} | identity["settings"]))
         settings.validate()
         for field in ("title", "author", "language"):
             if not isinstance(identity[field], str):
@@ -166,7 +183,7 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
     identity = {"app": __version__, "runtime": _runtime_versions(), "source_sha256": book.source_sha256,
                 "title": book.title, "author": book.author, "language": book.language,
                 "chapters": [{"index": i, "title": book.chapters[i].title, "text_sha256": hashlib.sha256(book.chapters[i].text.encode()).hexdigest()} for i in selected],
-                "voice": voice_hashes, "settings": asdict(settings)}
+                "voice": voice_hashes, "settings": settings.identity()}
     key = hashlib.sha256(_canonical(identity).encode()).hexdigest()
     folder = Path(output).absolute()
     if resume and not folder.is_dir():
@@ -263,10 +280,10 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
                 raise AudioPodError(f"Untracked audio {name} already exists. Move it aside before resuming.")
             if engine is None:
                 progress({"message": "Loading local voice…", "fraction": number / len(selected)})
-                engine = engine_factory(model, config, settings.speed, settings.speaker, settings.threads)
+                engine = engine_factory(model, config, settings.speed, settings.speaker, settings.threads, settings.profile, settings.pause_scale)
             with tempfile.TemporaryDirectory(prefix=".chapter-", dir=folder) as temp:
                 wav_path = Path(temp) / "audio.wav"
-                engine.render(chapter.text, wav_path,
+                quality = engine.render(chapter.text, wav_path,
                               lambda done, total: progress({"message": f"{chapter.title} · chunk {done}/{total}", "fraction": (number + done / total) / len(selected)}), cancelled)
                 with wave.open(str(wav_path), "rb") as wav:
                     duration = wav.getnframes() / wav.getframerate()
@@ -275,6 +292,8 @@ def render_book(book, model, output, settings=Settings(), selected=None, resume=
                     produced = Path(temp) / "audio.mp3"
                     _ffmpeg(["-i", str(wav_path), "-map", "0:a:0", "-c:a", "libmp3lame", "-b:a", "96k", "-metadata", f"title={chapter.title}", "-metadata", f"album={book.title}", "-metadata", f"artist={book.author}", str(produced)], cancelled)
                 record = {"index": index, "title": chapter.title, "file": name, "duration": duration, "sha256": sha256_file(produced)}
+                if quality is not None:
+                    record["pcm_quality"] = quality
                 os.replace(produced, target)
             receipt["completed"][str(index)] = record
             records.append(record)

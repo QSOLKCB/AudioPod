@@ -11,6 +11,7 @@ import threading
 from . import AudioPodError, Cancelled, __version__
 from .books import load_book
 from .render import Settings, render_book, resume_options
+from .prosody import NATURAL, ORIGINAL
 from .voices import default_model, install_voice
 
 
@@ -61,6 +62,8 @@ def main(argv=None):
     render.add_argument("--speed", type=float, default=1.0)
     render.add_argument("--speaker", type=int, default=0)
     render.add_argument("--threads", type=int, default=4)
+    render.add_argument("--style", choices=["natural", "original"], default="natural", help="Natural phrasing/levels, or the original renderer for comparisons and older jobs")
+    render.add_argument("--pause-scale", type=float, default=1.0, help="Natural pause length multiplier, 0.5–2.0 (default 1)")
     render.add_argument("--chapters", help="Section numbers from inspect, for example 2,4-7")
     render.add_argument("--title")
     render.add_argument("--author")
@@ -107,7 +110,8 @@ def main(argv=None):
             book = replace(book, title=args.title)
         if args.author is not None:
             book = replace(book, author=args.author)
-        render_book(book, args.model, args.output, Settings(args.speed, args.speaker, args.threads, args.format),
+        render_book(book, args.model, args.output, Settings(args.speed, args.speaker, args.threads, args.format,
+                    NATURAL if args.style == "natural" else ORIGINAL, args.pause_scale),
                     chapter_selection(args.chapters, len(book.chapters)), args.resume,
                     lambda e: print(f"{e['fraction']:.0%} · {e['message']}", flush=True), cancelled.is_set)
         return 0

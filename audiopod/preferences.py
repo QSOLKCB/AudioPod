@@ -7,11 +7,13 @@ import shutil
 import tempfile
 
 from .voices import data_home, default_model
+from .prosody import NATURAL, ORIGINAL
 
 
 def defaults():
     return {"model": str(default_model()), "output_parent": str(Path.home() / "AudioPod"),
-            "speed": 1.0, "speaker": 0, "threads": 4, "format": "mp3" if shutil.which("ffmpeg") else "wav", "font_size": 11}
+            "speed": 1.0, "speaker": 0, "threads": 4, "format": "mp3" if shutil.which("ffmpeg") else "wav", "font_size": 11,
+            "profile": NATURAL, "pause_scale": 1.0}
 
 
 def validated(values):
@@ -31,6 +33,11 @@ def validated(values):
         clean["speed"] = speed
     if values.get("format") in ("wav", "mp3", "m4b"):
         clean["format"] = values["format"]
+    if values.get("profile") in (NATURAL, ORIGINAL):
+        clean["profile"] = values["profile"]
+    pause = values.get("pause_scale")
+    if clean["profile"] == NATURAL and type(pause) in (int, float) and .5 <= pause <= 2:
+        clean["pause_scale"] = pause
     return clean
 
 

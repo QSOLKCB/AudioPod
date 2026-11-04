@@ -70,6 +70,10 @@ jobs:
         run: |
           strace -f -e trace=network -o network.trace .venv/bin/python scripts/smoke_voice.py
           python scripts/check_network_trace.py network.trace
+      - name: Public narration comparison and signal measurements
+        run: |
+          strace -f -e trace=network -o comparison-network.trace .venv/bin/python scripts/compare_narration.py --output narration-comparison
+          python scripts/check_network_trace.py comparison-network.trace
       - name: Native desktop smoke test
         run: xvfb-run -a uv run --offline --locked python scripts/smoke_gui.py
       - name: Listening page behaviour
@@ -78,6 +82,11 @@ jobs:
         run: |
           uv build --no-sources
           python scripts/check_dist.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: audiopod-narration-comparison
+          path: narration-comparison/
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: audiopod-source-and-wheel
